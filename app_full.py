@@ -2,9 +2,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objs as go
 from fpdf import FPDF
 from io import BytesIO
+import textwrap
 
 @st.cache_data
 def load_data():
@@ -45,12 +45,6 @@ def compute_Ed(h, D, Ee, Ei):
 
     return None, None, None, None, None, None
 
-def update_preview(title, D, p, En, layers, results):
-    lines = [f"{title}", "", f"Осов товар: 100 kN", f"Диаметър D: {D:.2f} см", f"Налягане p: {p:.3f} MPa", f"Необходим En: {En:.1f} MPa", ""]
-    for idx, (layer, res) in enumerate(zip(layers, results), 1):
-        lines.append(f"Пласт {idx}: Ee = {layer['Ee']} MPa | Ei = {layer['Ei']} MPa | h = {layer['h']} см | Ed = {res['Ed (MPa)']}")
-    return "\n".join(lines)
-
 def generate_pdf(text):
     pdf = FPDF()
     pdf.add_page()
@@ -63,77 +57,46 @@ def generate_pdf(text):
     buffer.seek(0)
     return buffer.read()
 
-def draw_layers(layers):
-    fig = go.Figure()
-    y = 0
-    colors = ['#444444', '#888888', '#BBBBBB', '#DDDDDD']
-
-    for i, layer in enumerate(layers):
-        h = layer['h']
-        fig.add_trace(go.Scatter(
-            x=[0, 1, 1, 0, 0],
-            y=[y, y, y - h, y - h, y],
-            fill='toself',
-            name=f"Пласт {i+1}",
-            fillcolor=colors[i % len(colors)],
-            line=dict(color='black'),
-            hoverinfo='text',
-            text=f"h = {h} cm"
-        ))
-        y -= h
-
-    fig.update_layout(
-        height=500,
-        xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-        yaxis=dict(title="Дълбочина [cm]", autorange='reversed'),
-        showlegend=True,
-        margin=dict(t=30)
-    )
-    return fig
-
 st.set_page_config(layout="wide")
-st.title("📐 Оразмеряване на пътна конструкция")
+st.title("📐 Оразмеряване на пътна конструкция (пласт по пласт)")
 
-col1, col2 = st.columns([1, 1.2])
+col1, col2 = st.columns([1, 1.3])
 
 with col1:
-    st.header("🧾 Въвеждане на данни")
-
+    st.header("🔧 Основни параметри")
     title = st.text_input("Заглавие", value="Оразмеряване на пътната конструкция за 10 т/ос")
-    D = st.number_input("Диаметър на отпечатъка D (cm)", value=32.04)
-    p = st.number_input("Налягане на гумите p (MPa)", value=0.62)
-    En = st.number_input("Необходим модул на еластичност En (MPa)", value=160.0)
+    D = st.number_input("Диаметър D (см)", value=32.04)
+    p = st.number_input("Налягане p (MPa)", value=0.62)
+    En = st.number_input("Необходим модул En (MPa)", value=160.0)
 
     num_layers = st.number_input("Брой пластове", min_value=1, max_value=10, value=3, step=1)
 
     layers = []
-    for i in range(int(num_layers)):
-        st.markdown(f"### Пласт {i + 1}")
-        Ee = st.number_input(f"Ee{i+1} (MPa)", key=f"ee{i}", value=160.0 + i * 100)
-        Ei = st.number_input(f"E{i+1} (MPa)", key=f"ei{i}", value=1000.0 - i * 200)
-        h = st.number_input(f"h{i+1} (cm)", key=f"h{i}", value=4.0 + i * 2)
-        layers.append({'Ee': Ee, 'Ei': Ei, 'h': h})
-
-    st.subheader("📊 Резултати от изчисленията:")
-
     results = []
-    for i, layer in enumerate(layers, 1):
-        Ee, Ei, h = layer['Ee'], layer['Ei'], layer['h']
+    st.header("📥 Въведи данни за всеки пласт")
+
+    for i in range(int(num_layers)):
+        st.markdown(f"### Пласт {i+1}")
+        Ee = st.number_input(f"Ee{i+1} (MPa)", key=f"ee{i}", value=160.0 + i * 100)
+        Ei = st.number_input(f"Ei{i+1} (MPa)", key=f"ei{i}", value=1000.0 - i * 200)
+        h = st.number_input(f"h{i+1} (cm)", key=f"h{i}", value=4.0 + i * 2)
         Ed, hD, y_low, y_high, iso_low, iso_high = compute_Ed(h, D, Ee, Ei)
+        layers.append({'Ee': Ee, 'Ei': Ei, 'h': h})
         results.append({
-            "Ee (MPa)": Ee,
-            "Ei (MPa)": Ei,
-            "Ee/Ei": round(Ee / Ei, 3),
-            "h (cm)": h,
+            "Ee": Ee,
+            "Ei": Ei,
+            "h": h,
             "h/D": round(h / D, 3),
-            "Ed (MPa)": round(Ed, 2) if Ed else "❌",
+            "Ee/Ei": round(Ee / Ei, 3),
+            "Ed": round(Ed, 2) if Ed else "❌",
             "Ed/Ei": round(Ed / Ei, 3) if Ed else "❌"
         })
 
-    st.dataframe(pd.DataFrame(results))
-
-    if st.button("Обнови визуализация"):
-        st.session_state['doc'] = update_preview(title, D, p, En, layers, results)
+    if st.button("Обнови преглед и сваляне"):
+        lines = [f"{title}", "", f"Осов товар: 100 kN", f"D = {D:.2f} см", f"p = {p:.3f} MPa", f"En = {En:.1f} MPa", ""]
+        for idx, r in enumerate(results, 1):
+            lines.append(f"Пласт {idx}: Ee = {r['Ee']} | Ei = {r['Ei']} | h = {r['h']} | Ed = {r['Ed']}")
+        st.session_state['doc'] = "\n".join(lines)
 
     if st.button("Свали PDF"):
         pdf_bytes = generate_pdf(st.session_state.get('doc', ""))
@@ -141,9 +104,8 @@ with col1:
 
 with col2:
     st.header("📄 Преглед на документа")
-    preview = st.session_state.get('doc', "Попълни данни отляво и натисни 'Обнови визуализация'")
-    st.text_area("Преглед", preview, height=500)
+    preview = st.session_state.get('doc', "Попълни данни и натисни 'Обнови преглед и сваляне'")
+    st.text_area("Преглед", preview, height=400)
 
-    st.subheader("📐 Схема на конструкцията")
-    fig = draw_layers(layers)
-    st.plotly_chart(fig, use_container_width=True)
+    st.subheader("📊 Таблица с междинни резултати")
+    st.table(pd.DataFrame(results))
