@@ -6,7 +6,6 @@ from fpdf import FPDF
 from io import BytesIO
 import plotly.graph_objs as go
 
-# Зареждане на номограмни данни
 @st.cache_data
 def load_data():
     df = pd.read_csv("combined_data.csv")
@@ -18,7 +17,6 @@ def load_data():
 
 data = load_data()
 
-# Изчисление на Ed по номограма
 def compute_Ed(h, D, Ee, Ei):
     hD = h / D
     EeEi = Ee / Ei
@@ -47,70 +45,70 @@ def compute_Ed(h, D, Ee, Ei):
 
     return None, None, None, None, None, None
 
-# Настройки
 st.set_page_config(layout="wide")
 st.title("📐 Оразмеряване пласт по пласт с номограма")
 
-NUM_LAYERS = 4  # По подразбиране
+NUM_LAYERS = 4
+
 if "current_layer" not in st.session_state:
     st.session_state.current_layer = 1
 if "results" not in st.session_state:
     st.session_state.results = []
+if "layer_done" not in st.session_state:
+    st.session_state.layer_done = False
+if "completed" not in st.session_state:
+    st.session_state.completed = False
 
 D = st.selectbox("Диаметър на отпечатъка D (cm)", options=[34.0, 32.04], index=1)
 
-st.header(f"Пласт {st.session_state.current_layer} от {NUM_LAYERS}")
+if not st.session_state.completed:
+    st.header(f"Пласт {st.session_state.current_layer} от {NUM_LAYERS}")
 
-# Входни стойности
-Ee = st.number_input("Ee (MPa)", value=160.0 + 100 * (st.session_state.current_layer - 1))
-Ei = st.number_input("Ei (MPa)", value=1000.0 - 100 * (st.session_state.current_layer - 1))
-h = st.number_input("h (cm)", value=4.0 + 2 * (st.session_state.current_layer - 1))
+    Ee = st.number_input("Ee (MPa)", value=160.0 + 100 * (st.session_state.current_layer - 1), key="Ee")
+    Ei = st.number_input("Ei (MPa)", value=1000.0 - 100 * (st.session_state.current_layer - 1), key="Ei")
+    h = st.number_input("h (cm)", value=4.0 + 2 * (st.session_state.current_layer - 1), key="h")
 
-EeEi = Ee / Ei
+    EeEi = Ee / Ei
 
-st.write("### Въведени параметри:")
-st.write(pd.DataFrame({
-    "Параметър": ["Ee", "Ei", "h", "D", "Ee / Ei", "h / D"],
-    "Стойност": [
-        Ee,
-        Ei,
-        h,
-        D,
-        round(EeEi, 3),
-        round(h / D, 3)
-    ]
-}))
+    st.write("### Въведени параметри:")
+    st.write(pd.DataFrame({
+        "Параметър": ["Ee", "Ei", "h", "D", "Ee / Ei", "h / D"],
+        "Стойност": [Ee, Ei, h, D, round(EeEi, 3), round(h / D, 3)]
+    }))
 
-if st.button("Изчисли Ed"):
-    result, hD_point, y_low, y_high, low_iso, high_iso = compute_Ed(h, D, Ee, Ei)
+    if not st.session_state.layer_done:
+        if st.button("Изчисли Ed"):
+            result, hD_point, y_low, y_high, low_iso, high_iso = compute_Ed(h, D, Ee, Ei)
 
-    if result is None:
-        st.warning("❗ Точката е извън обхвата на наличните изолинии.")
-    else:
-        EdEi_point = result / Ei
-        st.success(f"✅ Ed / Ei = {EdEi_point:.3f}, Ed = {result:.2f} MPa")
-        st.info(f"Интерполация между: Ee / Ei = {low_iso:.3f} и {high_iso:.3f}")
+            if result is None:
+                st.warning("❗ Точката е извън обхвата.")
+            else:
+                EdEi_point = result / Ei
+                st.success(f"✅ Ed / Ei = {EdEi_point:.3f}, Ed = {result:.2f} MPa")
+                st.info(f"Интерполация: Ee / Ei = {low_iso:.3f} → {high_iso:.3f}")
 
-        st.session_state.results.append({
-            "Пласт": st.session_state.current_layer,
-            "Ee": Ee,
-            "Ei": Ei,
-            "h": h,
-            "h/D": round(h / D, 3),
-            "Ee/Ei": round(EeEi, 3),
-            "Ed": round(result, 2),
-            "Ed/Ei": round(EdEi_point, 3)
-        })
+                st.session_state.results.append({
+                    "Пласт": st.session_state.current_layer,
+                    "Ee": Ee,
+                    "Ei": Ei,
+                    "h": h,
+                    "h/D": round(h / D, 3),
+                    "Ee/Ei": round(EeEi, 3),
+                    "Ed": round(result, 2),
+                    "Ed/Ei": round(EdEi_point, 3)
+                })
+                st.session_state.layer_done = True
 
-        if st.session_state.current_layer < NUM_LAYERS:
+    if st.session_state.layer_done and st.session_state.current_layer < NUM_LAYERS:
+        if st.button("Напред към следващ пласт"):
+            st.session_state.layer_done = False
             st.session_state.current_layer += 1
-        else:
+
+    if st.session_state.layer_done and st.session_state.current_layer == NUM_LAYERS:
+        if st.button("Приключи и покажи резултати"):
             st.session_state.completed = True
 
-        st.experimental_rerun()
-
-# След последния пласт — показваме обобщена таблица
-if "completed" in st.session_state and st.session_state.completed:
+if st.session_state.completed:
     st.success("✅ Всички пластове са въведени.")
     st.subheader("📊 Обобщена таблица")
     df = pd.DataFrame(st.session_state.results)
