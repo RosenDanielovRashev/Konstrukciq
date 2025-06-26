@@ -4,8 +4,9 @@ import pandas as pd
 import numpy as np
 from fpdf import FPDF
 from io import BytesIO
-import textwrap
+import plotly.graph_objs as go
 
+# Зареждане на номограмни данни
 @st.cache_data
 def load_data():
     df = pd.read_csv("combined_data.csv")
@@ -17,6 +18,7 @@ def load_data():
 
 data = load_data()
 
+# Изчисление на Ed по номограма
 def compute_Ed(h, D, Ee, Ei):
     hD = h / D
     EeEi = Ee / Ei
@@ -45,67 +47,98 @@ def compute_Ed(h, D, Ee, Ei):
 
     return None, None, None, None, None, None
 
-def generate_pdf(text):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Courier", size=12)
-    for line in text.split("\n"):
-        for wrapped_line in textwrap.wrap(line, width=90):
-            pdf.cell(200, 8, txt=wrapped_line, ln=True)
-    buffer = BytesIO()
-    pdf.output(buffer)
-    buffer.seek(0)
-    return buffer.read()
-
+# Настройки
 st.set_page_config(layout="wide")
-st.title("📐 Оразмеряване на пътна конструкция (пласт по пласт)")
+st.title("📐 Оразмеряване пласт по пласт с номограма")
 
-col1, col2 = st.columns([1, 1.3])
+NUM_LAYERS = 4  # По подразбиране
+if "current_layer" not in st.session_state:
+    st.session_state.current_layer = 1
+if "results" not in st.session_state:
+    st.session_state.results = []
 
-with col1:
-    st.header("🔧 Основни параметри")
-    title = st.text_input("Заглавие", value="Оразмеряване на пътната конструкция за 10 т/ос")
-    D = st.number_input("Диаметър D (см)", value=32.04)
-    p = st.number_input("Налягане p (MPa)", value=0.62)
-    En = st.number_input("Необходим модул En (MPa)", value=160.0)
+D = st.selectbox("Диаметър на отпечатъка D (cm)", options=[34.0, 32.04], index=1)
 
-    num_layers = st.number_input("Брой пластове", min_value=1, max_value=10, value=3, step=1)
+st.header(f"Пласт {st.session_state.current_layer} от {NUM_LAYERS}")
 
-    layers = []
-    results = []
-    st.header("📥 Въведи данни за всеки пласт")
+# Входни стойности
+Ee = st.number_input("Ee (MPa)", value=160.0 + 100 * (st.session_state.current_layer - 1))
+Ei = st.number_input("Ei (MPa)", value=1000.0 - 100 * (st.session_state.current_layer - 1))
+h = st.number_input("h (cm)", value=4.0 + 2 * (st.session_state.current_layer - 1))
 
-    for i in range(int(num_layers)):
-        st.markdown(f"### Пласт {i+1}")
-        Ee = st.number_input(f"Ee{i+1} (MPa)", key=f"ee{i}", value=160.0 + i * 100)
-        Ei = st.number_input(f"Ei{i+1} (MPa)", key=f"ei{i}", value=1000.0 - i * 200)
-        h = st.number_input(f"h{i+1} (cm)", key=f"h{i}", value=4.0 + i * 2)
-        Ed, hD, y_low, y_high, iso_low, iso_high = compute_Ed(h, D, Ee, Ei)
-        layers.append({'Ee': Ee, 'Ei': Ei, 'h': h})
-        results.append({
+EeEi = Ee / Ei
+
+st.write("### Въведени параметри:")
+st.write(pd.DataFrame({
+    "Параметър": ["Ee", "Ei", "h", "D", "Ee / Ei", "h / D"],
+    "Стойност": [
+        Ee,
+        Ei,
+        h,
+        D,
+        round(EeEi, 3),
+        round(h / D, 3)
+    ]
+}))
+
+if st.button("Изчисли Ed"):
+    result, hD_point, y_low, y_high, low_iso, high_iso = compute_Ed(h, D, Ee, Ei)
+
+    if result is None:
+        st.warning("❗ Точката е извън обхвата на наличните изолинии.")
+    else:
+        EdEi_point = result / Ei
+        st.success(f"✅ Ed / Ei = {EdEi_point:.3f}, Ed = {result:.2f} MPa")
+        st.info(f"Интерполация между: Ee / Ei = {low_iso:.3f} и {high_iso:.3f}")
+
+        st.session_state.results.append({
+            "Пласт": st.session_state.current_layer,
             "Ee": Ee,
             "Ei": Ei,
             "h": h,
             "h/D": round(h / D, 3),
-            "Ee/Ei": round(Ee / Ei, 3),
-            "Ed": round(Ed, 2) if Ed else "❌",
-            "Ed/Ei": round(Ed / Ei, 3) if Ed else "❌"
+            "Ee/Ei": round(EeEi, 3),
+            "Ed": round(result, 2),
+            "Ed/Ei": round(EdEi_point, 3)
         })
 
-    if st.button("Обнови преглед и сваляне"):
-        lines = [f"{title}", "", f"Осов товар: 100 kN", f"D = {D:.2f} см", f"p = {p:.3f} MPa", f"En = {En:.1f} MPa", ""]
-        for idx, r in enumerate(results, 1):
-            lines.append(f"Пласт {idx}: Ee = {r['Ee']} | Ei = {r['Ei']} | h = {r['h']} | Ed = {r['Ed']}")
-        st.session_state['doc'] = "\n".join(lines)
+        if st.session_state.current_layer < NUM_LAYERS:
+            st.session_state.current_layer += 1
+        else:
+            st.session_state.completed = True
 
-    if st.button("Свали PDF"):
-        pdf_bytes = generate_pdf(st.session_state.get('doc', ""))
-        st.download_button("⬇️ Изтегли PDF", data=pdf_bytes, file_name="orazmerqvane.pdf")
+        st.experimental_rerun()
 
-with col2:
-    st.header("📄 Преглед на документа")
-    preview = st.session_state.get('doc', "Попълни данни и натисни 'Обнови преглед и сваляне'")
-    st.text_area("Преглед", preview, height=400)
+# След последния пласт — показваме обобщена таблица
+if "completed" in st.session_state and st.session_state.completed:
+    st.success("✅ Всички пластове са въведени.")
+    st.subheader("📊 Обобщена таблица")
+    df = pd.DataFrame(st.session_state.results)
+    st.table(df)
 
-    st.subheader("📊 Таблица с междинни резултати")
-    st.table(pd.DataFrame(results))
+    def generate_pdf(df):
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Courier", size=12)
+        pdf.cell(200, 10, txt="Оразмеряване на пътна конструкция", ln=True)
+        pdf.ln(5)
+
+        headers = ["Пласт", "Ee", "Ei", "h", "h/D", "Ee/Ei", "Ed", "Ed/Ei"]
+        col_widths = [20, 20, 20, 15, 20, 20, 20, 20]
+
+        for h, w in zip(headers, col_widths):
+            pdf.cell(w, 8, h, border=1)
+        pdf.ln()
+
+        for _, row in df.iterrows():
+            for col, w in zip(headers, col_widths):
+                pdf.cell(w, 8, str(row[col]), border=1)
+            pdf.ln()
+
+        buffer = BytesIO()
+        pdf.output(buffer)
+        buffer.seek(0)
+        return buffer.read()
+
+    pdf_bytes = generate_pdf(df)
+    st.download_button("⬇️ Изтегли PDF", data=pdf_bytes, file_name="results.pdf")
